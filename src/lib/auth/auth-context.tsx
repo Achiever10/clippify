@@ -2,12 +2,15 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+import { usePathname } from "next/navigation";
 import AppLoader from "@/components/AppLoader";
 import {
   completeTikTokSignIn,
@@ -53,7 +56,17 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+function shouldHoldForAuth(pathname: string) {
+  return (
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/admin") ||
+    pathname === "/login" ||
+    pathname === "/signup"
+  );
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const [user, setUser] = useState<AppUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   // Tracks the uid of the most recent profile we know for certain is real (read or
@@ -84,7 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, []);
 
-  const login = async (email: string, password: string): Promise<LoginResult> => {
+  const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     try {
       const nextUser = await loginWithFirebase(email.trim(), password);
       if (!nextUser) {
@@ -97,9 +110,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const message = error instanceof Error ? error.message : "Invalid email or password.";
       return { ok: false, error: message };
     }
-  };
+  }, []);
 
-  const register: AuthState["register"] = async ({ name, username, email, password, role }) => {
+  const register: AuthState["register"] = useCallback(async ({ name, username, email, password, role }) => {
     const resolvedUsername = (username ?? name).trim() || name.trim() || "creator";
     try {
       const nextUser = await registerWithFirebase({
@@ -116,9 +129,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const message = error instanceof Error ? error.message : "Unable to create account.";
       throw new Error(message);
     }
-  };
+  }, []);
 
-  const signInWithGoogle = async (role: Exclude<AppRole, "admin"> = "creator"): Promise<LoginResult> => {
+  const signInWithGoogle = useCallback(async (role: Exclude<AppRole, "admin"> = "creator"): Promise<LoginResult> => {
     try {
       const nextUser = await signInWithGoogleOAuth(role);
       realProfileUidRef.current = nextUser.id;
@@ -128,9 +141,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const message = error instanceof Error ? error.message : "Google sign-in failed.";
       return { ok: false, error: message };
     }
-  };
+  }, []);
 
-  const signInWithTikTok = async (
+  const signInWithTikTok = useCallback(async (
     customToken: string,
     role: Exclude<AppRole, "admin"> = "creator",
   ): Promise<LoginResult> => {
@@ -143,17 +156,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const message = error instanceof Error ? error.message : "TikTok sign-in failed.";
       return { ok: false, error: message };
     }
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     await logoutFromFirebase();
     realProfileUidRef.current = null;
     setUser(null);
-  };
+  }, []);
 
-  const getDashboardRoute = (role?: AppRole | null) => getDashboardRouteForRole(role ?? user?.role ?? null);
+  const getDashboardRoute = useCallback(
+    (role?: AppRole | null) => getDashboardRouteForRole(role ?? user?.role ?? null),
+    [user?.role],
+  );
 
-  const sendPasswordReset = async (email: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+  const sendPasswordReset = useCallback(async (email: string): Promise<{ ok: true } | { ok: false; error: string }> => {
     try {
       await requestPasswordReset(email.trim());
       return { ok: true };
@@ -161,23 +177,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const message = error instanceof Error ? error.message : "Couldn't send reset email.";
       return { ok: false, error: message };
     }
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({
+      user,
+      isLoading,
+      login,
+      register,
+      signInWithGoogle,
+      signInWithTikTok,
+      logout,
+      getDashboardRoute,
+      sendPasswordReset,
+    }),
+    [
+      user,
+      isLoading,
+      login,
+      register,
+      signInWithGoogle,
+      signInWithTikTok,
+      logout,
+      getDashboardRoute,
+      sendPasswordReset,
+    ],
+  );
+
+  // Public pages (landing, legal) paint immediately. Dashboard, admin, and the auth
+  // screens still wait — RequireAuth keys off a confirmed role, and login/signup
+  // redirect as soon as a session exists, so showing them early flashes the wrong UI.
+  const hold = isLoading && shouldHoldForAuth(pathname);
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isLoading,
-        login,
-        register,
-        signInWithGoogle,
-        signInWithTikTok,
-        logout,
-        getDashboardRoute,
-        sendPasswordReset,
-      }}
-    >
-      {isLoading ? <AppLoader /> : children}
+    <AuthContext.Provider value={value}>
+      {hold ? <AppLoader /> : children}
     </AuthContext.Provider>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Script from "next/script";
 import { Eye, ExternalLink, Film, Heart, Play, Search, X } from "lucide-react";
 import RequireAuth from "@/components/dashboard/RequireAuth";
@@ -50,6 +50,7 @@ function BrowseClipsContent() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const pending = clips.filter(
       (clip) =>
         !clip.thumbnailUrl &&
@@ -58,19 +59,35 @@ function BrowseClipsContent() {
         !attemptedThumbnailIds.current.has(clip.id) &&
         !fetchingThumbnailIds.current.has(clip.id),
     );
-    pending.forEach((clip) => {
-      fetchingThumbnailIds.current.add(clip.id);
-      fetchTikTokVideoStats(clip.link)
-        .then((result) => {
-          if (result?.thumbnailUrl) {
-            setFetchedThumbnails((prev) => ({ ...prev, [clip.id]: result.thumbnailUrl }));
+    if (pending.length === 0) return;
+
+    // A page of clips used to fire one TikAPI request per card at once. Three at a
+    // time keeps the grid filling in without saturating the API or the browser.
+    const queue = [...pending];
+    const workerCount = Math.min(3, queue.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (!cancelled) {
+        const clip = queue.shift();
+        if (!clip) return;
+        fetchingThumbnailIds.current.add(clip.id);
+        try {
+          const result = await fetchTikTokVideoStats(clip.link);
+          if (!cancelled && result?.thumbnailUrl) {
+            setFetchedThumbnails((prev) =>
+              prev[clip.id] ? prev : { ...prev, [clip.id]: result.thumbnailUrl },
+            );
           }
-        })
-        .finally(() => {
+        } finally {
           attemptedThumbnailIds.current.add(clip.id);
           fetchingThumbnailIds.current.delete(clip.id);
-        });
+        }
+      }
     });
+    void Promise.all(workers);
+
+    return () => {
+      cancelled = true;
+    };
   }, [clips]);
 
   useEffect(() => {
@@ -101,14 +118,15 @@ function BrowseClipsContent() {
     }
   };
 
-  const filtered = clips.filter((clip) => {
-    const matchesCategory = active === "All" || clip.category === active;
-    const matchesSearch =
-      !search.trim() ||
-      clip.title.toLowerCase().includes(search.toLowerCase()) ||
-      clip.creatorName.toLowerCase().includes(search.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return clips.filter((clip) => {
+      const matchesCategory = active === "All" || clip.category === active;
+      const matchesSearch =
+        !term || clip.title.toLowerCase().includes(term) || clip.creatorName.toLowerCase().includes(term);
+      return matchesCategory && matchesSearch;
+    });
+  }, [clips, active, search]);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -176,22 +194,24 @@ function BrowseClipsContent() {
               className="group overflow-hidden rounded-2xl border-2 border-slate-900 bg-white transition-all duration-150 hover:-translate-y-1 hover:shadow-[4px_4px_0_0_#000] dark:border-white/15 dark:hover:shadow-[4px_4px_0_0_rgba(255,255,255,0.4)]"
             >
               <div className="relative flex aspect-video items-center justify-center bg-gradient-to-br from-slate-800 to-slate-950">
-                {clip.videoUrl ? (
-                  <video
-                    src={clip.videoUrl}
-                    poster={clip.thumbnailUrl || undefined}
-                    className="h-full w-full object-cover"
-                    muted
-                    controls
-                  />
-                ) : effectiveThumbnail && clip.link ? (
+                {clip.videoUrl || (effectiveThumbnail && clip.link) ? (
                   <button
                     onClick={() => setPlayingClip(clip)}
                     aria-label={`Play ${clip.title}`}
                     className="group/play relative h-full w-full"
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={effectiveThumbnail} alt="" className="h-full w-full object-cover" />
+                    {effectiveThumbnail ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={effectiveThumbnail}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <Film className="h-7 w-7 text-white/40" />
+                    )}
                     <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/0 to-black/10 transition-colors group-hover/play:from-black/80" />
                     <span className="absolute inset-0 flex items-center justify-center">
                       <span className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-white bg-black/40 backdrop-blur transition-transform group-hover/play:scale-110 group-hover/play:bg-yellow-400 group-hover/play:text-black">
@@ -260,7 +280,9 @@ function BrowseClipsContent() {
       )}
 
       {playingClip && <PlayerModal clip={playingClip} onClose={() => setPlayingClip(null)} />}
-      <Script src="https://www.tiktok.com/embed.js" strategy="lazyOnload" />
+      {playingClip && !playingClip.videoUrl && playingClip.link && extractTikTokVideoId(playingClip.link) && (
+        <Script src="https://www.tiktok.com/embed.js" strategy="lazyOnload" />
+      )}
     </div>
   );
 }
@@ -276,7 +298,7 @@ function PlayerModal({ clip, onClose }: { clip: Clip; onClose: () => void }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className={`relative w-full overflow-hidden rounded-2xl border-2 border-white/20 bg-black ${tiktokId ? "max-w-sm" : "max-w-2xl"}`}
+        className={`relative w-full overflow-hidden rounded-2xl border-2 border-white/20 bg-black ${!clip.videoUrl && tiktokId ? "max-w-sm" : "max-w-2xl"}`}
       >
         <button
           onClick={onClose}
@@ -285,7 +307,9 @@ function PlayerModal({ clip, onClose }: { clip: Clip; onClose: () => void }) {
         >
           <X className="h-4 w-4" />
         </button>
-        {youtubeId ? (
+        {clip.videoUrl ? (
+          <video src={clip.videoUrl} poster={clip.thumbnailUrl || undefined} className="aspect-video w-full bg-black" controls autoPlay playsInline />
+        ) : youtubeId ? (
           <div className="aspect-video w-full">
             <iframe
               src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1`}

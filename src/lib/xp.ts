@@ -1,4 +1,13 @@
-import { collection, doc, increment, limit, onSnapshot, orderBy, query, setDoc, updateDoc } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  increment,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  runTransaction,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { getInitials } from "@/lib/firebase-helpers";
 
@@ -54,12 +63,20 @@ export type LeaderboardEntry = {
 // award, not an error.
 export async function awardXp(uid: string, name: string, amount: number) {
   const ref = doc(db, "leaderboard", uid);
-  try {
-    await updateDoc(ref, { xp: increment(amount) });
-  } catch {
-    // Doc doesn't exist yet — this creator's first-ever XP award.
-    await setDoc(ref, { name, initials: getInitials(name), xp: amount });
-  }
+  // A failed update used to fall through to setDoc and replace the whole doc, which
+  // reset a creator's XP to just this award whenever the failure was anything other
+  // than "doc doesn't exist yet" (rules, offline, a concurrent write). The transaction
+  // only creates on a real miss and otherwise increments, so those failures throw
+  // instead of wiping the score. Rules still require create xp <= 100 and updates to
+  // touch only `xp` by at most +100 — every XP_REWARDS value is inside that bound.
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) {
+      tx.set(ref, { name, initials: getInitials(name), xp: amount });
+      return;
+    }
+    tx.update(ref, { xp: increment(amount) });
+  });
 }
 
 export function subscribeToMyXp(uid: string, callback: (xp: number) => void) {

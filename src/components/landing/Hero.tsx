@@ -22,7 +22,7 @@ export default function Hero() {
             className="animate-fade-in-up mt-5 text-base text-slate-500 dark:text-slate-400 sm:text-lg"
             style={{ animationDelay: "120ms" }}
           >
-            Connect creators with trusted clip editors and high-impact content partners.
+            Streamers, Brand and Creators launches campaign, clippers post. Connecting creators to trusted clip editors and high impact content partners.
           </p>
 
           <div

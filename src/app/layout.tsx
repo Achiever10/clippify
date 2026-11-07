@@ -28,7 +28,8 @@ const spaceGrotesk = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: "Clippifi — Marketplace for Streamers & Clip Editors",
-  description: "Connect streamers with trusted clip editors and content partners.",
+  description:
+    "Streamers, Brand and Creators launches campaign, clippers post. Connecting creators to trusted clip editors and high impact content partners.",
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "any" },

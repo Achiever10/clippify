@@ -3,21 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronRight, Eye, Film, Heart, Play } from "lucide-react";
-
-type PopularClip = {
-  title: string;
-  creatorName: string;
-  viewCount: number;
-  likeCount: number;
-  thumbnailUrl: string | null;
-};
+import { loadLandingStats, type PopularClip } from "@/lib/landing-stats";
 
 export default function PopularClips() {
   const [clips, setClips] = useState<PopularClip[] | null>(null);
 
   useEffect(() => {
-    fetch("/api/public/landing-stats")
-      .then((res) => res.json())
+    loadLandingStats()
       .then((data) => setClips(data.popularClips ?? []))
       .catch(() => setClips([]));
   }, []);
@@ -55,6 +47,8 @@ export default function PopularClips() {
                   <img
                     src={clip.thumbnailUrl}
                     alt=""
+                    loading="lazy"
+                    decoding="async"
                     className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
                   />
                 ) : (

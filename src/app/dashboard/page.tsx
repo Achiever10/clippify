@@ -18,7 +18,8 @@ import { useAuth } from "@/lib/auth/auth-context";
 import StatCard from "@/components/dashboard/StatCard";
 import XpCard from "@/components/dashboard/XpCard";
 import EmptyState from "@/components/dashboard/EmptyState";
-import { fetchFavoriteIds, subscribeToApprovedClips, subscribeToClipsForUser, type Clip } from "@/lib/clips";
+import { subscribeToApprovedClips, subscribeToClipsForUser, subscribeToFavorites, type Clip } from "@/lib/clips";
+import { extractYouTubeVideoId, youtubeThumbnailUrl } from "@/lib/youtube";
 import { subscribeToCampaignsForUser, type Campaign } from "@/lib/firebase-helpers";
 
 const roleLabel: Record<string, string> = {
@@ -55,10 +56,11 @@ function DashboardHomeContent() {
     if (!user) return;
     const unsubMyClips = subscribeToClipsForUser(user.id, setMyClips);
     const unsubCampaigns = subscribeToCampaignsForUser(user.id, setCampaigns);
-    fetchFavoriteIds(user.id).then((ids) => setFavoriteCount(ids.size));
+    const unsubFavorites = subscribeToFavorites(user.id, (favorites) => setFavoriteCount(favorites.length));
     return () => {
       unsubMyClips();
       unsubCampaigns();
+      unsubFavorites();
     };
   }, [user]);
 
@@ -211,13 +213,7 @@ function DashboardHomeContent() {
               className="group overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm shadow-slate-100 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg dark:border-white/10 dark:bg-[#111] dark:shadow-none"
             >
               <div className="relative flex aspect-video items-center justify-center bg-gradient-to-br from-slate-800 to-slate-950">
-                {clip.videoUrl ? (
-                  <video src={clip.videoUrl} className="h-full w-full object-cover" muted />
-                ) : (
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur">
-                    <Play className="h-3.5 w-3.5 fill-white text-white" />
-                  </span>
-                )}
+                <ClipPoster clip={clip} />
               </div>
               <div className="p-3">
                 <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">
@@ -292,6 +288,27 @@ function DashboardHomeContent() {
       )}
       <div className="h-4" />
     </div>
+  );
+}
+
+function clipPosterUrl(clip: Clip) {
+  if (clip.thumbnailUrl) return clip.thumbnailUrl;
+  const youtubeId = clip.link ? extractYouTubeVideoId(clip.link) : null;
+  return youtubeId ? youtubeThumbnailUrl(youtubeId) : null;
+}
+
+function ClipPoster({ clip }: { clip: Clip }) {
+  const poster = clipPosterUrl(clip);
+  if (!poster) {
+    return (
+      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur">
+        <Play className="h-3.5 w-3.5 fill-white text-white" />
+      </span>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={poster} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
   );
 }
 

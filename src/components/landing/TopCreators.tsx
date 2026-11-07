@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronRight, Eye } from "lucide-react";
-
-type TopCreator = { creatorName: string; clipCount: number; totalViews: number };
+import { loadLandingStats, type TopCreator } from "@/lib/landing-stats";
 
 const palette = [
   "bg-amber-500 text-black",
@@ -18,8 +17,7 @@ export default function TopCreators() {
   const [creators, setCreators] = useState<TopCreator[] | null>(null);
 
   useEffect(() => {
-    fetch("/api/public/landing-stats")
-      .then((res) => res.json())
+    loadLandingStats()
       .then((data) => setCreators(data.topCreators ?? []))
       .catch(() => setCreators([]));
   }, []);

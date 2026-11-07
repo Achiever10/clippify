@@ -160,15 +160,50 @@ export function subscribeToClipsForUser(userId: string, callback: (clips: Clip[]
 }
 
 export function subscribeToClipsForCampaign(campaignId: string, callback: (clips: Clip[]) => void) {
-  const q = query(collection(db, "clips"), where("campaignId", "==", campaignId));
-  return onSnapshot(
-    q,
-    (snap) => callback(byCreatedAtDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Clip))),
-    (error) => {
-      console.error("Campaign clips listener error:", error);
-      callback([]);
-    },
-  );
+  return subscribeToClipsForCampaigns([campaignId], callback);
+}
+
+// Firestore `in` queries accept at most 30 values. Chunking keeps a brand with many
+// campaigns on a handful of listeners instead of one snapshot per campaign.
+const CAMPAIGN_ID_IN_LIMIT = 30;
+
+export function subscribeToClipsForCampaigns(campaignIds: string[], callback: (clips: Clip[]) => void) {
+  const ids = [...new Set(campaignIds)].filter(Boolean);
+  if (ids.length === 0) {
+    callback([]);
+    return () => {};
+  }
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += CAMPAIGN_ID_IN_LIMIT) {
+    chunks.push(ids.slice(i, i + CAMPAIGN_ID_IN_LIMIT));
+  }
+
+  const perChunk = new Map<number, Clip[]>();
+  const emit = () => {
+    callback(byCreatedAtDesc(Array.from(perChunk.values()).flat()));
+  };
+
+  const unsubs = chunks.map((chunk, index) => {
+    const q = query(collection(db, "clips"), where("campaignId", "in", chunk));
+    return onSnapshot(
+      q,
+      (snap) => {
+        perChunk.set(
+          index,
+          snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Clip),
+        );
+        emit();
+      },
+      (error) => {
+        console.error("Campaign clips listener error:", error);
+        perChunk.set(index, []);
+        emit();
+      },
+    );
+  });
+
+  return () => unsubs.forEach((unsub) => unsub());
 }
 
 // Approving a clip tied to a campaign has to check and debit that campaign's

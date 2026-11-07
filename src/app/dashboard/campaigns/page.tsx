@@ -17,7 +17,7 @@ import {
   type Campaign,
   type CampaignStatus,
 } from "@/lib/firebase-helpers";
-import { setClipStatus, subscribeToClipsForCampaign, type Clip } from "@/lib/clips";
+import { setClipStatus, subscribeToClipsForCampaigns, type Clip } from "@/lib/clips";
 import { verifyFlutterwavePayment } from "@/lib/flutterwave";
 
 const statusOptions: CampaignStatus[] = ["draft", "active", "completed", "cancelled"];
@@ -101,19 +101,12 @@ function MyCampaignsContent() {
     }
   };
 
-  // Subscribed per-campaign (not "all clips, filter client-side") so this only ever
-  // reads clips belonging to this brand's own campaigns.
+  // One `in` query per 30 campaigns (not one listener per campaign, and not "all
+  // clips, filter client-side") so this only reads clips on this brand's campaigns.
   const campaignIds = campaigns.map((c) => c.id).sort().join(",");
   useEffect(() => {
     const ids = campaignIds ? campaignIds.split(",") : [];
-    const perCampaign = new Map<string, Clip[]>();
-    const unsubs = ids.map((id) =>
-      subscribeToClipsForCampaign(id, (clips) => {
-        perCampaign.set(id, clips);
-        setEntries(Array.from(perCampaign.values()).flat());
-      }),
-    );
-    return () => unsubs.forEach((u) => u());
+    return subscribeToClipsForCampaigns(ids, setEntries);
   }, [campaignIds]);
 
   const visibleCampaigns = useMemo(() => {
