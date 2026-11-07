@@ -117,7 +117,9 @@ service cloud.firestore {
     match /transactions/{transactionId} {
       allow read: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
 
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      // Payment records are written only by trusted server routes after provider
+      // verification; clients must not be able to create success-shaped ledger rows.
+      allow create: if false;
 
       // A payment record is a fact of what happened — never edited or removed
       // afterward, by anyone (including admins).

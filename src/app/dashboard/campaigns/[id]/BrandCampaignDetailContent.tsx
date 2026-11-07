@@ -19,6 +19,7 @@ import {
 } from "@/lib/firebase-helpers";
 import { setClipStatus, subscribeToClipsForCampaign, type Clip } from "@/lib/clips";
 import { verifyFlutterwavePayment } from "@/lib/flutterwave";
+import { verifyPaystackPayment } from "@/lib/paystack";
 import {
   setParticipationStatus,
   subscribeToParticipationForCampaign,
@@ -118,7 +119,9 @@ export default function BrandCampaignDetailContent() {
     setCheckingPayment(true);
     setPaymentMessage("");
     try {
-      const result = await verifyFlutterwavePayment(id);
+      const result = campaign?.paymentProvider === "paystack"
+        ? await verifyPaystackPayment(id)
+        : await verifyFlutterwavePayment(id);
       if (!result.ok) setPaymentMessage(result.error);
       else if (result.verified) setPaymentMessage("Payment confirmed — campaign is now live.");
       else setPaymentMessage("No successful payment found yet. If you just paid, this can take a minute — try again shortly.");
@@ -229,7 +232,8 @@ export default function BrandCampaignDetailContent() {
             </select>
           </div>
 
-          {campaign.status === "awaiting_payment" && campaign.paymentProvider === "flutterwave" && (
+          {campaign.status === "awaiting_payment" &&
+            (campaign.paymentProvider === "flutterwave" || campaign.paymentProvider === "paystack") && (
             <button
               onClick={checkPayment}
               disabled={checkingPayment}

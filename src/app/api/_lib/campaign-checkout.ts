@@ -53,7 +53,14 @@ export async function createPendingCampaign(
   const settings = settingsSnap.data() ?? {};
   const feeRate = parseFloat(settings.campaignProcessingFee ?? "5") / 100;
   const minBudget = parseFloat(settings.minCampaignBudget ?? "1000");
-  if (!Number.isFinite(feeRate) || budget < minBudget) {
+  const liveProviders = settings.liveProviders;
+  if (!Array.isArray(liveProviders) || !liveProviders.includes(provider)) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "This payment method is currently unavailable." }, { status: 400 }),
+    };
+  }
+  if (!Number.isFinite(feeRate) || feeRate < 0 || !Number.isFinite(minBudget) || minBudget <= 0 || budget < minBudget) {
     return {
       ok: false,
       response: NextResponse.json({ error: `Campaign budget must be at least ₦${minBudget}.` }, { status: 400 }),
@@ -111,40 +118,45 @@ export async function activatePaidCampaign({
   provider: string;
 }): Promise<{ matched: boolean; duplicate?: boolean }> {
   const db = adminDb();
-  const eventRef = db.collection(eventsCollection).doc(eventId);
-  try {
-    await eventRef.create({ receivedAt: FieldValue.serverTimestamp() });
-  } catch {
-    return { matched: false, duplicate: true };
-  }
-
   const campaignRef = reference ? db.collection("campaigns").doc(reference) : null;
-  const campaignSnap = campaignRef ? await campaignRef.get() : null;
-  const campaign = campaignSnap?.data();
+  if (!campaignRef || !eventId) return { matched: false };
 
-  const matches =
-    !!campaign &&
-    campaign.status === "awaiting_payment" &&
-    campaign.paymentReference === paymentReference &&
-    currency === "NGN" &&
-    amount === campaign.amountDue;
+  const eventRef = db.collection(eventsCollection).doc(eventId);
+  const transactionRef = db.collection("transactions").doc();
+  return db.runTransaction(async (tx) => {
+    const eventSnap = await tx.get(eventRef);
+    const campaignSnap = await tx.get(campaignRef);
+    const campaign = campaignSnap.data();
+    const matches =
+      !!campaign &&
+      campaign.paymentProvider === provider &&
+      campaign.paymentReference === paymentReference &&
+      currency === "NGN" &&
+      Number.isFinite(amount) &&
+      Math.round(amount * 100) === Math.round(Number(campaign.amountDue) * 100);
 
-  if (!campaignRef || !campaign || !matches) return { matched: false };
+    if (!campaign || !matches) return { matched: false, ...(eventSnap.exists ? { duplicate: true } : {}) };
 
-  const batch = db.batch();
-  batch.update(campaignRef, { status: "active", paidAt: FieldValue.serverTimestamp() });
-  batch.set(db.collection("transactions").doc(), {
-    type: "campaign",
-    status: "success",
-    userId: campaign.brandId,
-    userName: campaign.brandName,
-    amount: campaign.amountDue,
-    provider,
-    reference: paymentReference,
-    relatedTitle: campaign.title,
-    createdAt: FieldValue.serverTimestamp(),
+    if (campaign.status !== "awaiting_payment") {
+      if (campaign.status !== "active") return { matched: false };
+      if (!eventSnap.exists) tx.create(eventRef, { receivedAt: FieldValue.serverTimestamp() });
+      return { matched: false, duplicate: true };
+    }
+
+    tx.update(campaignRef, { status: "active", paidAt: FieldValue.serverTimestamp() });
+    if (!eventSnap.exists) tx.create(eventRef, { receivedAt: FieldValue.serverTimestamp() });
+    tx.create(transactionRef, {
+      type: "campaign",
+      status: "success",
+      userId: campaign.brandId,
+      userName: campaign.brandName,
+      amount: campaign.amountDue,
+      provider,
+      reference: paymentReference,
+      relatedTitle: campaign.title,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    return { matched: true };
   });
-  await batch.commit();
-
-  return { matched: true };
 }

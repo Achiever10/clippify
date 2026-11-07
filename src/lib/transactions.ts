@@ -1,4 +1,4 @@
-import { addDoc, collection, onSnapshot, orderBy, query, serverTimestamp, Timestamp } from "firebase/firestore";
+import { collection, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 export type TransactionType = "campaign" | "clip_license";
@@ -18,31 +18,17 @@ export type Transaction = {
   createdAt: Timestamp | null;
 };
 
-export async function recordTransaction(input: {
-  type: TransactionType;
-  status: TransactionStatus;
-  userId: string;
-  userName: string;
-  amount: number;
-  provider: string;
-  reference?: string;
-  failureReason?: string;
-  relatedTitle?: string;
-}) {
-  await addDoc(collection(db, "transactions"), {
-    ...input,
-    createdAt: serverTimestamp(),
-  });
-}
-
-export function subscribeToAllTransactions(callback: (transactions: Transaction[]) => void) {
+export function subscribeToAllTransactions(
+  callback: (transactions: Transaction[]) => void,
+  onError?: (error: Error) => void,
+) {
   const q = query(collection(db, "transactions"), orderBy("createdAt", "desc"));
   return onSnapshot(
     q,
     (snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Transaction)),
     (error) => {
       console.error("Transactions listener error:", error);
-      callback([]);
+      onError?.(error);
     },
   );
 }

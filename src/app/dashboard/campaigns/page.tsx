@@ -19,6 +19,7 @@ import {
 } from "@/lib/firebase-helpers";
 import { setClipStatus, subscribeToClipsForCampaigns, type Clip } from "@/lib/clips";
 import { verifyFlutterwavePayment } from "@/lib/flutterwave";
+import { verifyPaystackPayment } from "@/lib/paystack";
 
 const statusOptions: CampaignStatus[] = ["draft", "active", "completed", "cancelled"];
 const filterOptions: Array<CampaignStatus | "all"> = ["all", "draft", "awaiting_payment", "active", "completed", "cancelled"];
@@ -95,6 +96,23 @@ function MyCampaignsContent() {
         setPaymentMessage(successMessage);
       } else {
         setPaymentMessage("No successful payment found yet for that campaign. If you just paid, this can take a minute — try again shortly.");
+      }
+    } finally {
+      setVerifyingPaymentFor(null);
+    }
+  };
+
+  const checkPaystackPayment = async (campaignId: string) => {
+    setVerifyingPaymentFor(campaignId);
+    setPaymentMessage("");
+    try {
+      const result = await verifyPaystackPayment(campaignId);
+      if (!result.ok) {
+        setPaymentMessage(result.error);
+      } else if (result.verified) {
+        setPaymentMessage("Payment confirmed — your campaign is live.");
+      } else {
+        setPaymentMessage("No successful payment found yet. If you just paid, try again shortly.");
       }
     } finally {
       setVerifyingPaymentFor(null);
@@ -283,9 +301,14 @@ function MyCampaignsContent() {
                 <BudgetBar campaign={c} className="mt-3" />
                 {c.deadline && <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">{c.deadline}</p>}
 
-                {c.status === "awaiting_payment" && c.paymentProvider === "flutterwave" && (
+                {c.status === "awaiting_payment" &&
+                  (c.paymentProvider === "flutterwave" || c.paymentProvider === "paystack") && (
                   <button
-                    onClick={() => checkFlutterwavePayment(c.id, "Payment confirmed — campaign is now live.")}
+                    onClick={() =>
+                      c.paymentProvider === "paystack"
+                        ? checkPaystackPayment(c.id)
+                        : checkFlutterwavePayment(c.id, "Payment confirmed — campaign is now live.")
+                    }
                     disabled={verifyingPaymentFor === c.id}
                     className="mt-2 flex items-center gap-1.5 text-xs font-medium text-amber-600 hover:underline disabled:opacity-60 dark:text-yellow-400"
                   >

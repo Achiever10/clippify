@@ -25,12 +25,17 @@ const filters: { label: string; value: "all" | TransactionStatus }[] = [
 export default function AdminTransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [filter, setFilter] = useState<"all" | TransactionStatus>("all");
 
   useEffect(() => {
     const unsubscribe = subscribeToAllTransactions((next) => {
       setTransactions(next);
       setLoading(false);
+      setLoadError("");
+    }, (error) => {
+      setLoading(false);
+      setLoadError(error.message || "Couldn't load transactions.");
     });
     return () => unsubscribe();
   }, []);
@@ -45,14 +50,14 @@ export default function AdminTransactionsPage() {
     <div className="mx-auto max-w-6xl">
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Transactions</h1>
       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-        Every payment attempt platform-wide — campaigns and clip licenses, successful and failed.
+        Payment records platform-wide — campaigns and clip licenses, successful and failed.
       </p>
 
       <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard icon={Wallet} label="Total Volume" value={`₦${totalVolume.toFixed(2)}`} />
         <StatCard icon={CheckCircle2} label="Successful" value={String(successful.length)} />
         <StatCard icon={XCircle} label="Failed" value={String(failed.length)} />
-        <StatCard icon={DollarSign} label="Total Attempts" value={String(transactions.length)} />
+        <StatCard icon={DollarSign} label="Total Records" value={String(transactions.length)} />
       </div>
 
       <div className="mt-5 flex flex-wrap gap-1.5">
@@ -76,12 +81,16 @@ export default function AdminTransactionsPage() {
         <div className="mt-6 flex items-center justify-center py-16">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-amber-500 dark:border-white/10 dark:border-t-yellow-400" />
         </div>
+      ) : loadError ? (
+        <p className="mt-6 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-500/10 dark:text-red-400">
+          Couldn&apos;t load transactions: {loadError}
+        </p>
       ) : visible.length === 0 ? (
         <div className="mt-6">
           <EmptyState
             icon={ShieldAlert}
             title="No transactions yet"
-            text="Payment attempts for campaigns and clip licenses will show up here."
+            text="Payment records for campaigns and clip licenses will show up here."
           />
         </div>
       ) : (

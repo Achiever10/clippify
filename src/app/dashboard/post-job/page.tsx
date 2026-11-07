@@ -18,10 +18,9 @@ import {
 import RequireAuth from "@/components/dashboard/RequireAuth";
 import { useAuth } from "@/lib/auth/auth-context";
 import { btnPrimary, btnSecondary } from "@/lib/button-styles";
-import { createCampaign, updateUserEmail, uploadCampaignFlyer } from "@/lib/firebase-helpers";
+import { updateUserEmail, uploadCampaignFlyer } from "@/lib/firebase-helpers";
 import { auth } from "@/lib/firebase";
 import { payWithPaystack } from "@/lib/paystack";
-import { recordTransaction } from "@/lib/transactions";
 import {
   defaultPublicSettings as defaultSettings,
   getPublicSettings,
@@ -151,13 +150,9 @@ function PostCampaignPageContent() {
     setStep("form");
   };
 
-  // Every provider except Paystack is a "redirect to a hosted checkout" flow — the
-  // campaign is created server-side as awaiting_payment and stays hidden from
-  // creators until that provider's signed webhook confirms payment (see
-  // src/app/api/{bachs,flutterwave}/webhook). Paystack resolves right here in the
-  // tab instead, so that branch creates the campaign directly once payWithPaystack
-  // reports success — there's no server-side confirmation step for it, unlike the
-  // others.
+  // Every checkout creates an awaiting-payment campaign on the server. Paystack's
+  // browser callback is only a signal to verify payment server-side; it never
+  // activates the campaign or writes a transaction directly.
   const handlePay = async () => {
     if (!user || !auth.currentUser) {
       setFormError("You must be signed in to post a campaign.");
@@ -219,54 +214,52 @@ function PostCampaignPageContent() {
 
       const publicKey = settings.providerPublicKeys.paystack;
       if (!publicKey) throw new Error("Paystack isn't fully configured yet. Ask an admin to check Manage Payments.");
-      // eslint-disable-next-line react-hooks/purity -- runs only inside this click handler, never during render
-      const reference = `clippifi-campaign-${user.id}-${Date.now()}`;
+      const idToken = await auth.currentUser.getIdToken();
+      const checkoutResponse = await fetch("/api/paystack/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          title,
+          channelLink,
+          brief,
+          budget: budgetAmount,
+          deadline,
+          flyerUrl,
+        }),
+      });
+      const checkoutData = await checkoutResponse.json().catch(() => ({}));
+      if (!checkoutResponse.ok || !checkoutData.campaignId || !checkoutData.reference || !checkoutData.amount) {
+        throw new Error(checkoutData.error || "Couldn't start Paystack checkout. Try again.");
+      }
+
       const result = await payWithPaystack({
         publicKey,
         email,
-        amountNaira: total,
-        reference,
+        amountNaira: checkoutData.amount,
+        reference: checkoutData.reference,
       });
       if (!result) {
-        await recordTransaction({
-          type: "campaign",
-          status: "failed",
-          userId: user.id,
-          userName: user.name,
-          amount: total,
-          provider: "paystack",
-          reference,
-          failureReason: "Payment window closed before completion",
-          relatedTitle: title.trim(),
-        }).catch((err) => console.error("Failed to record transaction:", err));
         setPaying(false);
         return;
       }
-      const paymentReference = result.reference;
-      await recordTransaction({
-        type: "campaign",
-        status: "success",
-        userId: user.id,
-        userName: user.name,
-        amount: total,
-        provider: "paystack",
-        reference: paymentReference,
-        relatedTitle: title.trim(),
-      }).catch((err) => console.error("Failed to record transaction:", err));
-
-      await createCampaign({
-        brandId: user.id,
-        brandName: user.name,
-        title: title.trim(),
-        channelLink: channelLink.trim(),
-        brief,
-        budget: budgetAmount,
-        deadline,
-        flyerUrl,
-        status: "active",
-        paymentProvider: "paystack",
-        paymentReference,
+      if (result.reference !== checkoutData.reference) {
+        throw new Error("Paystack returned a different payment reference. Check the campaign payment status before trying again.");
+      }
+      const verifyResponse = await fetch("/api/paystack/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ campaignId: checkoutData.campaignId }),
       });
+      const verifyData = await verifyResponse.json().catch(() => ({}));
+      if (!verifyResponse.ok || !verifyData.verified) {
+        throw new Error(verifyData.error || "Payment hasn't been confirmed yet. Check its status from your campaigns page.");
+      }
       setPaying(false);
       setStep("success");
       setTimeout(() => router.push("/dashboard/campaigns"), 1800);
